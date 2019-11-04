@@ -12,6 +12,7 @@ final class CallableResolver
      * @var ContainerInterface
      */
     private $container;
+
     public function __construct(ContainerInterface $container)
     {
         $this->container = $container;
