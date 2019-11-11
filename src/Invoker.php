@@ -7,6 +7,10 @@ namespace Chiron\Invoker;
 use Psr\Container\ContainerExceptionInterface;
 use Psr\Container\ContainerInterface;
 use Psr\Container\NotFoundExceptionInterface;
+use Chiron\Invoker\Exception\CannotResolveException;
+use Chiron\Invoker\Exception\InvocationException;
+use Chiron\Invoker\Reflection\ReflectionCallable;
+use Chiron\Invoker\Reflection\Reflection;
 use ReflectionObject;
 use ReflectionClass;
 use ReflectionFunction;
@@ -21,29 +25,13 @@ class Invoker implements InvokerInterface
     private $container;
 
     /**
-     * Injector constructor.
+     * Invoker constructor.
+     *
      * @param $container
      */
     public function __construct(ContainerInterface $container)
     {
         $this->container = $container;
-    }
-
-    /**
-     * Wrap the given closure such that its dependencies will be injected when executed.
-     *
-     * @param \Closure $callback
-     * @param array    $parameters
-     *
-     * @return \Closure
-     */
-    // https://github.com/illuminate/container/blob/master/Container.php#L556
-    // TODO : le paramétre $callback ne devrait pas plutot être du type callable au lieu de Closure ????? / voir même de type string car le call support les string avec le signe @
-    public function wrap(Closure $closure, array $parameters = []): Closure
-    {
-        return function () use ($closure, $parameters) {
-            return $this->call($closure, $parameters);
-        };
     }
 
     /**
@@ -75,57 +63,19 @@ class Invoker implements InvokerInterface
     //$callback => callable|array|string
     public function call($callback, array $params = [])
     {
-
-        // TODO : ajouter une fonction pour "resolve()" le callback si c'est une string avec ":" ou si c'est un tableau et que le 1er élément est une chaine aller chercher dans le container si la classe existe !!!!
         $resolved = (new CallableResolver($this->container))->resolve($callback);
-
-        if (!is_callable($resolved)) {
-            throw new \InvalidArgumentException(sprintf(
-                '%s is not resolvable',
-                is_array($callback) || is_object($callback) ? json_encode($callback) : $callback
-            ));
-        }
 
         return $this->invoke($resolved, $params);
     }
 
     public function invoke(callable $callable, array $args = [])
     {
-        $reflection = $this->reflectCallable($callable);
+        $reflection = new ReflectionCallable($callable);
         $parameters = $this->resolveArguments($reflection, $args);
 
         return call_user_func_array($callable, $parameters);
+        //return $reflection->invoke($parameters);
     }
-
-    private function reflectCallable(callable $callee): ReflectionFunctionAbstract
-    {
-        // closure, or function name,
-        if ($callee instanceof Closure) {
-            return new ReflectionFunction($callee);
-        } elseif (is_string($callee) && strpos($callee, '::') === false) {
-            return new ReflectionFunction($callee);
-        }
-        if (is_string($callee)) {
-            $callee = explode('::', $callee);
-        } elseif (is_object($callee)) {
-            $callee = [$callee, '__invoke'];
-        }
-        if (is_object($callee[0])) {
-            $reflection = new ReflectionObject($callee[0]);
-            if ($reflection->hasMethod($callee[1])) {
-                return $reflection->getMethod($callee[1]);
-            }
-            //magicMethod
-            return $reflection->getMethod('__call');
-        }
-        $reflection = new ReflectionClass($callee[0]);
-        if ($reflection->hasMethod($callee[1])) {
-            return $reflection->getMethod($callee[1]);
-        }
-        //magicMethod
-        return $reflection->getMethod('__callStatic');
-    }
-
 
     final public function resolveArguments(ReflectionFunctionAbstract $reflection, array $parameters = []): array {
         $arguments = [];
@@ -135,28 +85,14 @@ class Invoker implements InvokerInterface
                 //Information we need to know about argument in order to resolve it's value
                 $name = $parameter->getName();
                 $class = $parameter->getClass();
-            } catch (Throwable $e) {
+            } catch (\ReflectionException $e) {
                 //Possibly invalid class definition or syntax error
-                $location = $reflection->getName();
-                if ($reflection instanceof \ReflectionMethod) {
-                    $location = "{$reflection->getDeclaringClass()->getName()}->{$location}";
-                }
-                //Possibly invalid class definition or syntax error
-                throw new RuntimeException(
-                    "Unable to resolve `{$parameter->getName()}` in {$location}: " . $e->getMessage(),
-                    $e->getCode(),
-                    $e
-                );
+                throw new InvocationException(sprintf('Invalid value for parameter "$%s"', Reflection::toString($parameter)), $e->getCode(), $e);
             }
 
             if (isset($parameters[$name]) && is_object($parameters[$name])) {
-                //if ($parameters[$name] instanceof Autowire) {
-                    //Supplied by user as late dependency
-                //    $arguments[] = $parameters[$name]->resolve($this);
-                //} else {
-                    //Supplied by user as object
-                    $arguments[] = $parameters[$name];
-                //}
+                //Supplied by user as object
+                $arguments[] = $parameters[$name];
                 continue;
             }
             //No declared type or scalar type or array
@@ -164,22 +100,20 @@ class Invoker implements InvokerInterface
                 //Provided from outside
                 if (array_key_exists($name, $parameters)) {
                     //Make sure it's properly typed
-                    $this->assertType($parameter, $reflection, $parameters[$name]);
+                    $this->assertType($parameter, $parameters[$name]);
                     $arguments[] = $parameters[$name];
                     continue;
                 }
                 if ($parameter->isDefaultValueAvailable()) {
                     //Default value
                     $arguments[] = $parameter->getDefaultValue();
+                    $arguments[] = Reflection::getParameterDefaultValue($parameter);
                     continue;
                 }
                 //Unable to resolve scalar argument value
-                throw new RuntimeException(sprintf(
-                    'Unable to resolve a value for parameter (%s) in the function/method (%s)',
-                    $name,
-                    $reflection->getName()
-                ));
+                throw new CannotResolveException($parameter);
             }
+
             try {
                 //Requesting for contextual dependency
                 $arguments[] = $this->container->get($class->getName());
@@ -193,6 +127,7 @@ class Invoker implements InvokerInterface
                 throw $e;
             }
         }
+
         return $arguments;
     }
 
@@ -200,52 +135,33 @@ class Invoker implements InvokerInterface
      * Assert that given value are matched parameter type.
      *
      * @param \ReflectionParameter        $parameter
-     * @param \ReflectionFunctionAbstract $context
      * @param mixed                       $value
      *
-     * @throws ArgumentException
+     * @throws CannotResolveException
      */
-    private function assertType(
-        \ReflectionParameter $parameter,
-        \ReflectionFunctionAbstract $context,
-        $value
-    ) {
+    private function assertType(ReflectionParameter $parameter, $value): void
+    {
         if (is_null($value)) {
             if (!$parameter->isOptional() &&
                 !($parameter->isDefaultValueAvailable() && $parameter->getDefaultValue() === null)
             ) {
-                throw new RuntimeException(sprintf(
-                    'Unable to resolve a value for parameter (%s) in the function/method (%s)',
-                    $parameter->getName(),
-                    $context->getName()
-                ));
+                throw new CannotResolveException($parameter);
             }
             return;
         }
+
         $type = $parameter->getType();
         if ($type === null) {
             return;
         }
         if ($type->getName() == 'array' && !is_array($value)) {
-            throw new RuntimeException(sprintf(
-                    'Unable to resolve a value for parameter (%s) in the function/method (%s)',
-                    $parameter->getName(),
-                    $context->getName()
-                ));
+            throw new CannotResolveException($parameter);
         }
         if (($type->getName() == 'int' || $type->getName() == 'float') && !is_numeric($value)) {
-            throw new RuntimeException(sprintf(
-                    'Unable to resolve a value for parameter (%s) in the function/method (%s)',
-                    $parameter->getName(),
-                    $context->getName()
-                ));
+            throw new CannotResolveException($parameter);
         }
         if ($type->getName() == 'bool' && !is_bool($value) && !is_numeric($value)) {
-            throw new RuntimeException(sprintf(
-                    'Unable to resolve a value for parameter (%s) in the function/method (%s)',
-                    $parameter->getName(),
-                    $context->getName()
-                ));
+            throw new CannotResolveException($parameter);
         }
     }
 

@@ -2,7 +2,7 @@
 
 namespace Chiron\Invoker\Exception;
 
-class NotCallableException extends \Exception
+class NotCallableException extends InvocationException
 {
     /**
      * @param mixed $value
