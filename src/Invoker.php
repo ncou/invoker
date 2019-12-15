@@ -20,6 +20,7 @@ use ReflectionFunctionAbstract;
 use InvalidArgumentException;
 use Throwable;
 
+// TODO : passer la classe en "final"
 class Invoker implements InvokerInterface
 {
     private $container;
@@ -77,7 +78,7 @@ class Invoker implements InvokerInterface
         //return $reflection->invoke($parameters);
     }
 
-    final public function resolveArguments(ReflectionFunctionAbstract $reflection, array $parameters = []): array {
+    public function resolveArguments(ReflectionFunctionAbstract $reflection, array $parameters = []): array {
         $arguments = [];
 
         foreach ($reflection->getParameters() as $parameter) {
