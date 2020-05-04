@@ -19,9 +19,14 @@ class Reflection
         }
     }
 
+    /**
+     * Checks if it is a built-in type (i.e., it's not an object...)
+     *
+     * @see https://php.net/manual/en/reflectiontype.isbuiltin.php
+     */
     public static function isBuiltinType(string $type):bool
     {
-        return in_array($type, ['string', 'int', 'float', 'bool', 'array', 'object', 'callable', 'iterable', 'void', 'null']);
+        return in_array($type, ['string', 'int', 'float', 'bool', 'array', 'object', 'callable', 'iterable', 'void', 'parent', 'self']);
 
     }
 

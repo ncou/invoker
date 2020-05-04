@@ -6,6 +6,14 @@ use Chiron\Invoker\Exception\NotCallableException;
 use Psr\Container\ContainerInterface;
 use Psr\Container\NotFoundExceptionInterface;
 
+use ReflectionMethod;
+use ReflectionException;
+
+use RuntimeException;
+
+//https://github.com/PHP-DI/Invoker/blob/a812493e87bb4ed413584e4a98208f54c43475ec/src/CallableResolver.php
+
+// TODO : classe à transformer en "Trait" et à intégrer dans la classe Invoker !!!!
 final class CallableResolver
 {
     /**
@@ -28,16 +36,6 @@ final class CallableResolver
      */
     public function resolve($callable): callable
     {
-        // The callable is a string in the service:method notation.
-        if (is_string($callable) && substr_count($callable, ':') === 1) {
-            $callable = explode(':', $callable, 2);
-        }
-
-        // The callable is a string in the class::method notation.
-        if (is_string($callable) && strpos($callable, '::') !== false) {
-            $callable = explode('::', $callable, 2);
-        }
-
         $resolved = $this->resolveFromContainer($callable);
 
         if (! is_callable($resolved)) {
@@ -49,12 +47,24 @@ final class CallableResolver
 
     /**
      * @param callable|string|array $callable
-     * @return mixed
+     * @return mixed could be a callable, an array[object, string $method] in case the methode is private or protected, or unrecognized stuff
      *
      * @throws NotCallableException
      */
-    private function resolveFromContainer($callable)
+    public function resolveFromContainer($callable)
     {
+        // The callable is a string in the service:method notation.
+        /*
+        if (is_string($callable) && substr_count($callable, ':') === 1) {
+            $callable = explode(':', $callable, 2);
+        }*/
+
+        // The callable is a string in the class::method notation.
+        if (is_string($callable) && strpos($callable, '::') !== false) {
+            $callable = explode('::', $callable, 2);
+        }
+
+        // TODO : réfléchir si on garde ce bout de code, ce shortcut ne semble pas servir à grand chose et un is_callable est utilisé plus tard...
         // Shortcut for a very common use case
         if ($callable instanceof \Closure) {
             return $callable;
@@ -128,7 +138,7 @@ final class CallableResolver
     {
         if (is_array($callable) && is_string($callable[0])) {
             list($class, $method) = $callable;
-            $reflection = new \ReflectionMethod($class, $method);
+            $reflection = new ReflectionMethod($class, $method);
 
             return ! $reflection->isStatic();
         }

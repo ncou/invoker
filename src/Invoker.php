@@ -9,19 +9,27 @@ use Psr\Container\ContainerInterface;
 use Psr\Container\NotFoundExceptionInterface;
 use Chiron\Invoker\Exception\CannotResolveException;
 use Chiron\Invoker\Exception\InvocationException;
+use Chiron\Invoker\Exception\NotCallableException;
 use Chiron\Invoker\Reflection\ReflectionCallable;
+use Chiron\Invoker\Reflection\ReflectionCallable2;
 use Chiron\Invoker\Reflection\Reflection;
 use ReflectionObject;
 use ReflectionClass;
 use ReflectionFunction;
+use ReflectionParameter;
 use Closure;
 use RuntimeException;
 use ReflectionFunctionAbstract;
 use InvalidArgumentException;
 use Throwable;
 
-// TODO : passer la classe en "final"
-class Invoker implements InvokerInterface
+use ReflectionMethod;
+use ReflectionException;
+
+
+//https://github.com/rdlowrey/auryn/blob/master/lib/Injector.php#L237
+
+final class Invoker implements InvokerInterface
 {
     private $container;
 
@@ -69,6 +77,32 @@ class Invoker implements InvokerInterface
         return $this->invoke($resolved, $params);
     }
 
+    public function call2($callback, array $params = [])
+    {
+        $resolver = new CallableResolver($this->container);
+        try {
+            $resolved = $resolver->resolve($callback);
+        } catch (NotCallableException $e) {
+            // check if the method we try to call is private or protected.
+            $resolved = $resolver->resolveFromContainer($callback);
+            if (! is_callable($resolved) && is_array($resolved) && method_exists($resolved[0], $resolved[1])) {
+
+                $reflection = new ReflectionMethod($resolved[0], $resolved[1]);
+                $reflection->setAccessible(true);
+
+                //Invoking factory method with resolved arguments
+                return $reflection->invokeArgs(
+                    $resolved[0],
+                    $this->resolveArguments($reflection, $params)
+                );
+
+
+            }
+        }
+
+        return $this->invoke($resolved, $params);
+    }
+
     public function invoke(callable $callable, array $args = [])
     {
         $reflection = new ReflectionCallable($callable);
@@ -78,18 +112,57 @@ class Invoker implements InvokerInterface
         //return $reflection->invoke($parameters);
     }
 
+    //***********************
+
+
+    public function call3($callback, array $params = [])
+    {
+        $resolved = (new CallableResolver($this->container))->resolveFromContainer($callback);
+
+        return $this->invoke2($resolved, $params);
+    }
+
+    public function invoke2($callable, array $args = [])
+    {
+        $reflection = new ReflectionCallable2($callable);
+        $parameters = $this->resolveArguments($reflection, $args);
+
+        //return call_user_func_array($callable, $parameters);
+        return $reflection->invokeArgs($parameters);
+    }
+
+    //**********************
+
+
+
+
     public function resolveArguments(ReflectionFunctionAbstract $reflection, array $parameters = []): array {
         $arguments = [];
 
         foreach ($reflection->getParameters() as $parameter) {
+
             try {
+
+
                 //Information we need to know about argument in order to resolve it's value
                 $name = $parameter->getName();
                 $class = $parameter->getClass();
+
+
+
             } catch (\ReflectionException $e) {
+
+                //throw new CannotResolveException($parameter);
+
+
                 //Possibly invalid class definition or syntax error
-                throw new InvocationException(sprintf('Invalid value for parameter "$%s"', Reflection::toString($parameter)), $e->getCode(), $e);
+                throw new InvocationException(sprintf('Invalid value for parameter %s', Reflection::toString($parameter)), $e->getCode());
+                //throw new InvocationException("Unresolvable dependency resolving [$parameter] in class {$parameter->getDeclaringClass()->getName()}", $e->getCode());
+                //throw new InvocationException("Unresolvable dependency resolving [$parameter] in function " . $parameter->getDeclaringClass()->getName() . '::' . $parameter->getDeclaringFunction()->getName(), $e->getCode());
             }
+
+
+            //die(var_dump($class));
 
             if (isset($parameters[$name]) && is_object($parameters[$name])) {
                 //Supplied by user as object
@@ -107,7 +180,7 @@ class Invoker implements InvokerInterface
                 }
                 if ($parameter->isDefaultValueAvailable()) {
                     //Default value
-                    $arguments[] = $parameter->getDefaultValue();
+                    //$arguments[] = $parameter->getDefaultValue();
                     $arguments[] = Reflection::getParameterDefaultValue($parameter);
                     continue;
                 }
@@ -142,7 +215,7 @@ class Invoker implements InvokerInterface
      */
     private function assertType(ReflectionParameter $parameter, $value): void
     {
-        if (is_null($value)) {
+        if ($value === null) {
             if (!$parameter->isOptional() &&
                 !($parameter->isDefaultValueAvailable() && $parameter->getDefaultValue() === null)
             ) {
@@ -151,20 +224,68 @@ class Invoker implements InvokerInterface
             return;
         }
 
+        // TODO : utiliser la méthode hasType()
         $type = $parameter->getType();
+
         if ($type === null) {
             return;
         }
-        if ($type->getName() == 'array' && !is_array($value)) {
+
+        // TODO : on devrait aussi vérifier que la classe est identique, et vérifier aussi le type string pour que cette méthode soit plus générique. Vérifier ce qui se passe si on fait pas cette vérification c'est à dire appeller une fonction avec des paramétres qui n'ont pas le bon typehint !!!!
+        $typeName = $type->getName();
+        if ($typeName == 'array' && !is_array($value)) {
             throw new CannotResolveException($parameter);
         }
-        if (($type->getName() == 'int' || $type->getName() == 'float') && !is_numeric($value)) {
+        if (($typeName == 'int' || $typeName == 'float') && !is_numeric($value)) {
             throw new CannotResolveException($parameter);
         }
-        if ($type->getName() == 'bool' && !is_bool($value) && !is_numeric($value)) {
+        if ($typeName == 'bool' && !is_bool($value) && !is_numeric($value)) {
             throw new CannotResolveException($parameter);
         }
     }
+
+
+/*
+// TODO : utiliser ce bout de code et lever une exception si ce n'est pas un callable valide (throw InjectionException::fromInvalidCallable(xxx);)
+//https://github.com/rdlowrey/auryn/blob/master/lib/InjectionException.php
+//https://github.com/rdlowrey/auryn/blob/master/lib/Injector.php#L237
+    private function isExecutable($exe)
+    {
+        if (is_callable($exe)) {
+            return true;
+        }
+        if (is_string($exe) && method_exists($exe, '__invoke')) {
+            return true;
+        }
+        if (is_array($exe) && isset($exe[0], $exe[1]) && method_exists($exe[0], $exe[1])) {
+            return true;
+        }
+
+        return false;
+    }
+*/
+
+    /**
+     * @param string $type
+     * @return bool
+     */
+    /*
+    //https://github.com/zendframework/zend-di/blob/615fc00b55602d20506f228e939ac70792645e9b/src/Resolver/DependencyResolver.php#L208
+    private function isCallableType(string $type): bool
+    {
+        if ($this->config->isAlias($type)) {
+            $type = $this->config->getClassForAlias($type);
+        }
+
+        if (! class_exists($type) && ! interface_exists($type)) {
+            return false;
+        }
+
+        $reflection = new ReflectionClass($type);
+
+        return $reflection->hasMethod('__invoke')
+            && $reflection->getMethod('__invoke')->isPublic();
+    }*/
 
 
 }
