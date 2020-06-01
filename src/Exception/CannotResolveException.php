@@ -19,8 +19,8 @@ class CannotResolveException extends InvocationException
             $location = $function->getDeclaringClass()->getName() . '::' . $location;
         }
 
-        $this->line = $function->getStartLine();
         $this->file = $function->getFileName();
-        $this->message = sprintf('Cannot resolve a value for parameter "$%s" in the callable "%s"', $parameter->getName(), $location);
+        $this->line = $function->getStartLine();
+        $this->message = sprintf('Cannot resolve a value for parameter "$%s" in callable "%s"', $parameter->getName(), $location);
     }
 }
