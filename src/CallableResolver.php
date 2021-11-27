@@ -13,6 +13,9 @@ use RuntimeException;
 
 //https://github.com/PHP-DI/Invoker/blob/a812493e87bb4ed413584e4a98208f54c43475ec/src/CallableResolver.php
 
+// TODO : améliorer la vérification si on est bien sur un callable : <= attention le cas ou on lui passe une instance avec __invoke ou un tableau avec la 1er paramétre étant un object je pense que ca ne marchera pas !!!!
+//https://github.com/yiisoft/middleware-dispatcher/blob/master/src/MiddlewareFactory.php#L154
+
 // TODO : classe à transformer en "Trait" et à intégrer dans la classe Invoker !!!!
 final class CallableResolver
 {

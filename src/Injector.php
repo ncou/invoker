@@ -51,6 +51,7 @@ class Injector
      */
     public function invoke(callable $callback, array $params = [])
     {
+        // https://github.com/yiisoft/injector/blob/3bd38d4ebc70f39050e4ae056ac10c40c4975cb1/src/Injector.php#L65
         return \call_user_func_array($callback, $this->resolveCallableDependencies($callback, $params));
     }
 

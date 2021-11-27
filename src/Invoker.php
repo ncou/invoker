@@ -112,9 +112,15 @@ final class Invoker implements InvokerInterface
 
     public function invoke(callable $callable, array $args = [])
     {
+
+        // TODO : virer la classe ReflectionCallable et utiliser directement le code :
+        //$callable = Closure::fromCallable($callable);
+        //$reflection = new \ReflectionFunction($callable);
+
         $reflection = new ReflectionCallable($callable);
         $parameters = $this->resolver->resolveArguments($reflection, $args);
 
+        //https://github.com/yiisoft/injector/blob/3bd38d4ebc70f39050e4ae056ac10c40c4975cb1/src/Injector.php#L65
         return call_user_func_array($callable, $parameters);
         //return $reflection->invoke($parameters);
     }
